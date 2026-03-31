@@ -40,7 +40,7 @@ class RpcTracer final {
   void HandleLeaveReadRecvfrom(pid_t tid, int fd, uint64_t addr, uint64_t count, int rc);
   void HandleLeaveReadv(pid_t tid, int fd, uint64_t iov_addr, uint64_t iov_count, int rc);
   void HandleLeaveClose(pid_t tid, int fd, int rc);
-  void DispatchSyscallHandler(pid_t tid, uint64_t syscall, bool is_enter, uint64_t arg0,
+  void DispatchSyscallHandler(pid_t tid, uint64_t syscall, uint64_t arg0,
                               uint64_t arg1, uint64_t arg2, uint64_t rc);
 
   // PID to be traced
