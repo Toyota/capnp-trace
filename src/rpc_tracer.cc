@@ -255,26 +255,26 @@ void RpcTracer::HandleLeaveClose([[maybe_unused]] pid_t tid, int fd, int rc) {
   addresses_.erase(fd);
 }
 
-void RpcTracer::DispatchSyscallHandler(pid_t tid, uint64_t syscall, bool is_enter, uint64_t arg0,
+void RpcTracer::DispatchSyscallHandler(pid_t tid, uint64_t syscall, uint64_t arg0,
                                        uint64_t arg1, uint64_t arg2, uint64_t rc) {
   // KJ_DBG(syscall, is_enter, arg0, arg1, arg2, rc);
-  if (syscall == SYS_connect && !is_enter) {
+  if (syscall == SYS_connect) {
     HandleLeaveConnect(tid, static_cast<int>(arg0), arg1, arg2, static_cast<int>(rc));
-  } else if (syscall == SYS_read && !is_enter) {
+  } else if (syscall == SYS_read) {
     // for Cap'n Proto C++
     HandleLeaveReadRecvfrom(tid, static_cast<int>(arg0), arg1, arg2, static_cast<int>(rc));
-  } else if (syscall == SYS_writev && !is_enter) {
+  } else if (syscall == SYS_writev) {
     // for Cap'n Proto C++
     HandleLeaveWritev(tid, static_cast<int>(arg0), arg1, arg2, static_cast<int>(rc));
-  } else if (syscall == SYS_recvfrom && !is_enter) {
+  } else if (syscall == SYS_recvfrom) {
     // for Cap'n Proto Rust
     HandleLeaveReadRecvfrom(tid, static_cast<int>(arg0), arg1, arg2, static_cast<int>(rc));
-  } else if (syscall == SYS_write && !is_enter) {
+  } else if (syscall == SYS_write) {
     // for Cap'n Proto Rust
     HandleLeaveWrite(tid, static_cast<int>(arg0), arg1, arg2, static_cast<int>(rc));
-  } else if (syscall == SYS_readv && !is_enter) {
+  } else if (syscall == SYS_readv) {
     HandleLeaveReadv(tid, static_cast<int>(arg0), arg1, arg2, static_cast<int>(rc));
-  } else if (syscall == SYS_close && !is_enter) {
+  } else if (syscall == SYS_close) {
     HandleLeaveClose(tid, static_cast<int>(arg0), static_cast<int>(rc));
   }
 }
@@ -302,6 +302,7 @@ void RpcTracer::Trace() {
       struct __ptrace_syscall_info syscall_info;
       KJ_SYSCALL(ptrace(PTRACE_GET_SYSCALL_INFO, tid, sizeof(syscall_info), &syscall_info));
       bool is_enter = syscall_info.op == PTRACE_SYSCALL_INFO_ENTRY;
+      bool is_exit = syscall_info.op == PTRACE_SYSCALL_INFO_EXIT;
 
 #if defined(__aarch64__)
       struct user_regs_struct regs;
@@ -333,7 +334,9 @@ void RpcTracer::Trace() {
       uint64_t arg2    = regs.rdx;
 #endif
 
-      DispatchSyscallHandler(tid, syscall, is_enter, arg0, arg1, arg2, rc);
+      if (is_exit) {
+        DispatchSyscallHandler(tid, syscall, arg0, arg1, arg2, rc);
+      }
     }
 
     KJ_SYSCALL(ptrace(PTRACE_SYSCALL, tid, nullptr, nullptr));
