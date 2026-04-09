@@ -347,6 +347,16 @@ class TraceMain final {
         "PROVIDE",       "ACCEPT",  "JOIN",          "DISEMBARGO",
     };
 
+    if (type >= kj::size(kTypeStrings)) {
+      // The maximum value of capnp::rpc::Message::Which may change across versions of Cap'n Proto.
+      // So, type may exceed the size of kTypeStrings.
+      //
+      // But, This is not a fundamental fix. We can't wait for static reflection in C++26!
+      // https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2025/p2996r10.html
+      KJ_LOG(WARNING, "Unknown capnp::rpc::Message type.");
+      abort();
+    }
+
     switch (type) {
       case capnp::rpc::Message::UNIMPLEMENTED:
       case capnp::rpc::Message::ABORT:
