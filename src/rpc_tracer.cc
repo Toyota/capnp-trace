@@ -246,7 +246,7 @@ void RpcTracer::HandleLeaveReadv(pid_t tid, int fd, uint64_t iov_addr, uint64_t 
 
 void RpcTracer::HandleLeaveClose([[maybe_unused]] pid_t tid, int fd, int rc) {
   if (rc < 0) {
-    KJ_LOG(INFO, "failed readv");
+    KJ_LOG(INFO, "failed close");
     return;
   }
 
