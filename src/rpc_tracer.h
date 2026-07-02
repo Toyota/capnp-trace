@@ -34,14 +34,14 @@ class RpcTracer final {
 
  private:
   bool CheckAddress(int fd);
-  void HandleLeaveConnect(pid_t tid, int fd, uint64_t addr, uint64_t size, int rc);
-  void HandleLeaveWrite(pid_t tid, int fd, uint64_t addr, uint64_t count, int rc);
-  void HandleLeaveWritev(pid_t tid, int fd, uint64_t iov_addr, uint64_t iov_count, int rc);
-  void HandleLeaveReadRecvfrom(pid_t tid, int fd, uint64_t addr, uint64_t count, int rc);
-  void HandleLeaveReadv(pid_t tid, int fd, uint64_t iov_addr, uint64_t iov_count, int rc);
-  void HandleLeaveClose(pid_t tid, int fd, int rc);
+  void HandleLeaveConnect(pid_t tid, int fd, uint64_t addr, uint64_t size, int64_t rc);
+  void HandleLeaveWrite(pid_t tid, int fd, uint64_t addr, uint64_t count, int64_t rc);
+  void HandleLeaveWritev(pid_t tid, int fd, uint64_t iov_addr, uint64_t iov_count, int64_t rc);
+  void HandleLeaveReadRecvfrom(pid_t tid, int fd, uint64_t addr, uint64_t count, int64_t rc);
+  void HandleLeaveReadv(pid_t tid, int fd, uint64_t iov_addr, uint64_t iov_count, int64_t rc);
+  void HandleLeaveClose(pid_t tid, int fd, int64_t rc);
   void DispatchSyscallHandler(pid_t tid, uint64_t syscall, bool is_enter, uint64_t arg0,
-                              uint64_t arg1, uint64_t arg2, uint64_t rc);
+                              uint64_t arg1, uint64_t arg2, int64_t rc);
 
   // PID to be traced
   pid_t pid_;
