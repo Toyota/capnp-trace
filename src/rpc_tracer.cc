@@ -82,7 +82,7 @@ bool RpcTracer::CheckAddress(int fd) {
   return std::regex_match(addresses_[fd], target_address_);
 }
 
-void RpcTracer::HandleLeaveConnect(pid_t tid, int fd, uint64_t addr, uint64_t size, int rc) {
+void RpcTracer::HandleLeaveConnect(pid_t tid, int fd, uint64_t addr, uint64_t size, int64_t rc) {
   if (rc < 0) {
     KJ_LOG(INFO, "failed connect", rc);
     return;
@@ -100,7 +100,7 @@ void RpcTracer::HandleLeaveConnect(pid_t tid, int fd, uint64_t addr, uint64_t si
   addresses_.emplace(fd, saddr_un->sun_path);
 }
 
-void RpcTracer::HandleLeaveWrite(pid_t tid, int fd, uint64_t addr, uint64_t count, int rc) {
+void RpcTracer::HandleLeaveWrite(pid_t tid, int fd, uint64_t addr, uint64_t count, int64_t rc) {
   if (rc < 0) {
     KJ_LOG(INFO, "failed write", rc);
     return;
@@ -121,22 +121,24 @@ void RpcTracer::HandleLeaveWrite(pid_t tid, int fd, uint64_t addr, uint64_t coun
     reassemblers_out_.emplace(fd, kj::mv(reassembler));
   }
 
-  std::vector<char> buf(count);
-  ReadProcessMemory(tid, addr, count, buf.data());
+  // Use rc, not count: a partial write transfers fewer bytes than requested.
+  const size_t valid_len = static_cast<size_t>(rc);
+  std::vector<char> buf(valid_len);
+  ReadProcessMemory(tid, addr, valid_len, buf.data());
 
 #if 0
-  for (int i = 0; i < count; i += 8) {
-    fprintf(stdout, "write(%d): %02x %02x %02x %02x %02x %02x %02x %02x, %lld\n", fd, buf[i + 0],
+  for (size_t i = 0; i < valid_len; i += 8) {
+    fprintf(stdout, "write(%d): %02x %02x %02x %02x %02x %02x %02x %02x, %zu\n", fd, buf[i + 0],
             buf[i + 1], buf[i + 2], buf[i + 3], buf[i + 4], buf[i + 5], buf[i + 6], buf[i + 7],
-            count);
+            valid_len);
   }
 #endif
 
-  reassemblers_out_.at(fd).Reassemble(buf.data(), count);
+  reassemblers_out_.at(fd).Reassemble(buf.data(), valid_len);
 }
 
 void RpcTracer::HandleLeaveWritev(pid_t tid, int fd, uint64_t iov_addr, uint64_t iov_count,
-                                  int rc) {
+                                  int64_t rc) {
   if (rc < 0) {
     KJ_LOG(INFO, "failed writev", rc);
     return;
@@ -160,24 +162,28 @@ void RpcTracer::HandleLeaveWritev(pid_t tid, int fd, uint64_t iov_addr, uint64_t
   struct iovec* iov = reinterpret_cast<struct iovec*>(alloca(sizeof(struct iovec) * iov_count));
 
   ReadProcessMemory(tid, iov_addr, sizeof(struct iovec) * iov_count, reinterpret_cast<char*>(iov));
-  for (auto i = 0U; i < iov_count; i++) {
-    std::vector<char> buf(iov[i].iov_len);
-    ReadProcessMemory(tid, reinterpret_cast<uint64_t>(iov[i].iov_base), iov[i].iov_len, buf.data());
+  // rc is the total written across all iovecs; distribute it so no stale bytes leak.
+  size_t remaining = static_cast<size_t>(rc);
+  for (auto i = 0U; i < iov_count && remaining > 0; i++) {
+    const size_t valid_len = kj::min(remaining, iov[i].iov_len);
+    remaining -= valid_len;
+    std::vector<char> buf(valid_len);
+    ReadProcessMemory(tid, reinterpret_cast<uint64_t>(iov[i].iov_base), valid_len, buf.data());
 
 #if 0
-    for (int j = 0; j < iov[i].iov_len; j += 8) {
-      fprintf(stdout, "writev(%d): %02x %02x %02x %02x %02x %02x %02x %02x, %ld\n", fd, buf[j + 0],
+    for (size_t j = 0; j < valid_len; j += 8) {
+      fprintf(stdout, "writev(%d): %02x %02x %02x %02x %02x %02x %02x %02x, %zu\n", fd, buf[j + 0],
               buf[j + 1], buf[j + 2], buf[j + 3], buf[j + 4], buf[j + 5], buf[j + 6], buf[j + 7],
-              iov[i].iov_len);
+              valid_len);
     }
 #endif
 
-    reassemblers_out_.at(fd).Reassemble(buf.data(), iov[i].iov_len);
+    reassemblers_out_.at(fd).Reassemble(buf.data(), valid_len);
   }
 }
 
 // read(2) and recvfrom(2) have same arguments until argv[2]
-void RpcTracer::HandleLeaveReadRecvfrom(pid_t tid, int fd, uint64_t addr, uint64_t count, int rc) {
+void RpcTracer::HandleLeaveReadRecvfrom(pid_t tid, int fd, uint64_t addr, uint64_t count, int64_t rc) {
   if (rc < 0) {
     KJ_LOG(INFO, "failed read/recvfrom");
     return;
@@ -198,21 +204,23 @@ void RpcTracer::HandleLeaveReadRecvfrom(pid_t tid, int fd, uint64_t addr, uint64
     reassemblers_in_.emplace(fd, kj::mv(reassembler));
   }
 
-  std::vector<char> buf(count);
-  ReadProcessMemory(tid, addr, count, buf.data());
+  // Use rc, not count: bytes beyond the actual read are stale and corrupt reassembly.
+  const size_t valid_len = static_cast<size_t>(rc);
+  std::vector<char> buf(valid_len);
+  ReadProcessMemory(tid, addr, valid_len, buf.data());
 
 #if 0
-  for (int i = 0; i < count; i += 8) {
-    fprintf(stdout, "read(%d): %02x %02x %02x %02x %02x %02x %02x %02x, %lld\n", fd, buf[i + 0],
+  for (size_t i = 0; i < valid_len; i += 8) {
+    fprintf(stdout, "read(%d): %02x %02x %02x %02x %02x %02x %02x %02x, %zu\n", fd, buf[i + 0],
             buf[i + 1], buf[i + 2], buf[i + 3], buf[i + 4], buf[i + 5], buf[i + 6], buf[i + 7],
-            count);
+            valid_len);
   }
 #endif
 
-  reassemblers_in_.at(fd).Reassemble(buf.data(), count);
+  reassemblers_in_.at(fd).Reassemble(buf.data(), valid_len);
 }
 
-void RpcTracer::HandleLeaveReadv(pid_t tid, int fd, uint64_t iov_addr, uint64_t iov_count, int rc) {
+void RpcTracer::HandleLeaveReadv(pid_t tid, int fd, uint64_t iov_addr, uint64_t iov_count, int64_t rc) {
   if (rc < 0) {
     KJ_LOG(INFO, "failed readv");
     return;
@@ -236,15 +244,19 @@ void RpcTracer::HandleLeaveReadv(pid_t tid, int fd, uint64_t iov_addr, uint64_t 
   struct iovec* iov = reinterpret_cast<struct iovec*>(alloca(sizeof(struct iovec) * iov_count));
 
   ReadProcessMemory(tid, iov_addr, sizeof(struct iovec) * iov_count, reinterpret_cast<char*>(iov));
-  for (auto i = 0U; i < iov_count; i++) {
-    std::vector<char> buf(iov[i].iov_len);
-    ReadProcessMemory(tid, (uint64_t)iov[i].iov_base, iov[i].iov_len, buf.data());
+  // rc is the total read across all iovecs; distribute it so no stale bytes leak.
+  size_t remaining = static_cast<size_t>(rc);
+  for (auto i = 0U; i < iov_count && remaining > 0; i++) {
+    const size_t valid_len = kj::min(remaining, iov[i].iov_len);
+    remaining -= valid_len;
+    std::vector<char> buf(valid_len);
+    ReadProcessMemory(tid, (uint64_t)iov[i].iov_base, valid_len, buf.data());
 
-    reassemblers_in_.at(fd).Reassemble(buf.data(), iov[i].iov_len);
+    reassemblers_in_.at(fd).Reassemble(buf.data(), valid_len);
   }
 }
 
-void RpcTracer::HandleLeaveClose([[maybe_unused]] pid_t tid, int fd, int rc) {
+void RpcTracer::HandleLeaveClose([[maybe_unused]] pid_t tid, int fd, int64_t rc) {
   if (rc < 0) {
     KJ_LOG(INFO, "failed close");
     return;
@@ -256,26 +268,26 @@ void RpcTracer::HandleLeaveClose([[maybe_unused]] pid_t tid, int fd, int rc) {
 }
 
 void RpcTracer::DispatchSyscallHandler(pid_t tid, uint64_t syscall, bool is_enter, uint64_t arg0,
-                                       uint64_t arg1, uint64_t arg2, uint64_t rc) {
+                                       uint64_t arg1, uint64_t arg2, int64_t rc) {
   // KJ_DBG(syscall, is_enter, arg0, arg1, arg2, rc);
   if (syscall == SYS_connect && !is_enter) {
-    HandleLeaveConnect(tid, static_cast<int>(arg0), arg1, arg2, static_cast<int>(rc));
+    HandleLeaveConnect(tid, static_cast<int>(arg0), arg1, arg2, rc);
   } else if (syscall == SYS_read && !is_enter) {
     // for Cap'n Proto C++
-    HandleLeaveReadRecvfrom(tid, static_cast<int>(arg0), arg1, arg2, static_cast<int>(rc));
+    HandleLeaveReadRecvfrom(tid, static_cast<int>(arg0), arg1, arg2, rc);
   } else if (syscall == SYS_writev && !is_enter) {
     // for Cap'n Proto C++
-    HandleLeaveWritev(tid, static_cast<int>(arg0), arg1, arg2, static_cast<int>(rc));
+    HandleLeaveWritev(tid, static_cast<int>(arg0), arg1, arg2, rc);
   } else if (syscall == SYS_recvfrom && !is_enter) {
     // for Cap'n Proto Rust
-    HandleLeaveReadRecvfrom(tid, static_cast<int>(arg0), arg1, arg2, static_cast<int>(rc));
+    HandleLeaveReadRecvfrom(tid, static_cast<int>(arg0), arg1, arg2, rc);
   } else if (syscall == SYS_write && !is_enter) {
     // for Cap'n Proto Rust
-    HandleLeaveWrite(tid, static_cast<int>(arg0), arg1, arg2, static_cast<int>(rc));
+    HandleLeaveWrite(tid, static_cast<int>(arg0), arg1, arg2, rc);
   } else if (syscall == SYS_readv && !is_enter) {
-    HandleLeaveReadv(tid, static_cast<int>(arg0), arg1, arg2, static_cast<int>(rc));
+    HandleLeaveReadv(tid, static_cast<int>(arg0), arg1, arg2, rc);
   } else if (syscall == SYS_close && !is_enter) {
-    HandleLeaveClose(tid, static_cast<int>(arg0), static_cast<int>(rc));
+    HandleLeaveClose(tid, static_cast<int>(arg0), rc);
   }
 }
 
@@ -333,7 +345,7 @@ void RpcTracer::Trace() {
       uint64_t arg2    = regs.rdx;
 #endif
 
-      DispatchSyscallHandler(tid, syscall, is_enter, arg0, arg1, arg2, rc);
+      DispatchSyscallHandler(tid, syscall, is_enter, arg0, arg1, arg2, static_cast<int64_t>(rc));
     }
 
     KJ_SYSCALL(ptrace(PTRACE_SYSCALL, tid, nullptr, nullptr));
