@@ -1,6 +1,7 @@
 
 #include "rpc_tracer.h"
 
+#include <errno.h>
 #include <kj/debug.h>
 #include <kj/string.h>
 #include <limits.h>
@@ -305,11 +306,26 @@ void RpcTracer::Trace() {
   while (1) {
     int status{-1};
     pid_t tid = waitpid(-1, &status, __WALL);
+    if (tid < 0) {
+      // EINTR: retry; otherwise (ECHILD) no traced processes remain.
+      if (errno == EINTR) {
+        continue;
+      }
+      break;
+    }
     if (WIFEXITED(status)) {
       KJ_LOG(INFO, tid, "exited", WEXITSTATUS(status));
+      // The whole trace ends only when the top-level process exits.
+      if (tid == pid_) {
+        break;
+      }
       continue;
     } else if (WIFSIGNALED(status)) {
       KJ_LOG(WARNING, "terminated by signal", WTERMSIG(status));
+      if (tid == pid_) {
+        break;
+      }
+      continue;
     } else if (WIFSTOPPED(status)) {
       struct __ptrace_syscall_info syscall_info;
       KJ_SYSCALL(ptrace(PTRACE_GET_SYSCALL_INFO, tid, sizeof(syscall_info), &syscall_info));
@@ -348,7 +364,10 @@ void RpcTracer::Trace() {
       DispatchSyscallHandler(tid, syscall, is_enter, arg0, arg1, arg2, static_cast<int64_t>(rc));
     }
 
-    KJ_SYSCALL(ptrace(PTRACE_SYSCALL, tid, nullptr, nullptr));
+    // Tolerate ESRCH: the tracee may have died between waitpid() and here.
+    if (ptrace(PTRACE_SYSCALL, tid, nullptr, nullptr) < 0 && errno != ESRCH) {
+      KJ_FAIL_SYSCALL("ptrace(PTRACE_SYSCALL)", errno);
+    }
   }
 }
 }  // namespace capnp_trace
