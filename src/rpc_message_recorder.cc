@@ -2,6 +2,10 @@
 
 #include <capnp/serialize.h>
 
+#include <alloca.h>
+#include <cstring>
+#include <time.h>
+
 #include <string>
 
 #include "immutable_schema_registry.h"
