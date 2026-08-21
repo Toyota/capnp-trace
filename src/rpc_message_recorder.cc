@@ -1,11 +1,10 @@
 #include "rpc_message_recorder.h"
 
-#include <capnp/serialize.h>
-
 #include <alloca.h>
-#include <cstring>
+#include <capnp/serialize.h>
 #include <time.h>
 
+#include <cstring>
 #include <string>
 
 #include "immutable_schema_registry.h"
